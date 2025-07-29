@@ -66,7 +66,9 @@ export function CrossmintPaymentModal({
             }}
             appearance={{
               display: "popup",
-              overlay: true,
+              overlay: {
+                enabled: true,
+              },
               button: {
                 style: {
                   borderRadius: 8,
@@ -90,7 +92,6 @@ export function CrossmintPaymentModal({
               fiat: {
                 enabled: true,
                 defaultCurrency: "usd",
-                receiptEmail: "",
               },
             }}
             recipient={{
