@@ -7,7 +7,10 @@ import {
   StyleSheet,
   SafeAreaView,
 } from "react-native";
-import { CrossmintHostedCheckout } from "@crossmint/client-sdk-react-ui";
+import { 
+  CrossmintProvider, 
+  CrossmintEmbeddedCheckout 
+} from "@crossmint/client-sdk-react-native-ui";
 import { XION_CONFIG, CROSSMINT_CONFIG } from "@/config/constants";
 import { Ionicons } from "@expo/vector-icons";
 
@@ -32,6 +35,10 @@ export function CrossmintPaymentModal({
     onClose();
   };
 
+  const handleError = (error: any) => {
+    console.error("Payment error:", error);
+  };
+
   if (!visible) return null;
 
   return (
@@ -50,58 +57,39 @@ export function CrossmintPaymentModal({
         </View>
 
         <View style={styles.content}>
-          <View style={styles.priceInfo}>
-            <Text style={styles.priceLabel}>NFT Price</Text>
-            <Text style={styles.price}>{CROSSMINT_CONFIG.DEFAULT_PRICE}</Text>
-          </View>
-
-          <CrossmintHostedCheckout
-            clientId={XION_CONFIG.CROSSMINT_API_KEY}
-            lineItems={{
-              collectionLocator: `crossmint:${collectionId}`,
-              callData: {
-                totalPrice: CROSSMINT_CONFIG.DEFAULT_PRICE_VALUE,
-                quantity: 1,
-              },
-            }}
-            appearance={{
-              display: "popup",
-              overlay: {
-                enabled: true,
-              },
-              button: {
-                style: {
-                  borderRadius: 8,
-                  fontSize: 16,
-                  padding: "12px 24px",
-                  width: "100%",
+          <CrossmintProvider apiKey={XION_CONFIG.CROSSMINT_API_KEY}>
+            <CrossmintEmbeddedCheckout
+              lineItems={{
+                collectionLocator: `crossmint:${collectionId}`,
+                callData: {
+                  totalPrice: CROSSMINT_CONFIG.DEFAULT_PRICE_VALUE,
+                  quantity: 1,
                 },
-              },
-              checkout: {
-                modal: {
-                  width: "500px",
+              }}
+              payment={{
+                crypto: {
+                  enabled: true,
+                  defaultChain: "base-sepolia",
+                  defaultCurrency: "usdc",
                 },
-              },
-            }}
-            payment={{
-              crypto: {
-                enabled: true,
-                defaultChain: "base-sepolia",
-                defaultCurrency: "usdc",
-              },
-              fiat: {
-                enabled: true,
-                defaultCurrency: "usd",
-              },
-            }}
-            recipient={{
-              walletAddress: recipientAddress,
-            }}
-            onSuccess={handleSuccess}
-            onError={(error) => {
-              console.error("Payment error:", error);
-            }}
-          />
+                fiat: {
+                  enabled: true,
+                  defaultCurrency: "usd",
+                },
+              }}
+              recipient={{
+                walletAddress: recipientAddress,
+              }}
+              onEvent={(event) => {
+                console.log("Crossmint event:", event);
+                if (event.type === "payment:process.succeeded") {
+                  handleSuccess();
+                } else if (event.type === "payment:process.failed") {
+                  handleError(event);
+                }
+              }}
+            />
+          </CrossmintProvider>
         </View>
       </SafeAreaView>
     </Modal>
@@ -133,22 +121,5 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     padding: 20,
-  },
-  priceInfo: {
-    alignItems: "center",
-    marginBottom: 24,
-    paddingVertical: 20,
-    backgroundColor: "#f5f5f5",
-    borderRadius: 12,
-  },
-  priceLabel: {
-    fontSize: 14,
-    color: "#666",
-    marginBottom: 4,
-  },
-  price: {
-    fontSize: 28,
-    fontWeight: "bold",
-    color: "#333",
   },
 });
