@@ -8,6 +8,7 @@ import {
   SafeAreaView,
   Alert,
   ActivityIndicator,
+  Platform,
 } from "react-native";
 import { XION_CONFIG } from "@/config/constants";
 import { Ionicons } from "@expo/vector-icons";
@@ -38,21 +39,33 @@ export function CrossmintPaymentModal({
       ? "https://www.crossmint.com" 
       : "https://staging.crossmint.com";
     
-    // Construct checkout URL with parameters
+    // Try different URL formats based on Crossmint's checkout options
+    // Option 1: Direct checkout buy URL
+    const checkoutPath = "/checkout/buy";
+    
+    // Construct parameters for NFT purchase
     const params = new URLSearchParams({
-      apiKey: apiKey,
-      collectionId: collectionId,
-      walletAddress: recipientAddress,
-      lineItems: JSON.stringify({
-        collectionLocator: `crossmint:${collectionId}`,
-        callData: {
-          totalPrice: "0.001",
-          quantity: 1,
-        },
-      }),
+      clientId: apiKey,
+      mintTo: recipientAddress,
+      // NFT specific parameters
+      collection: collectionId,
+      // Price in USD
+      price: "0.001",
+      quantity: "1",
     });
 
-    return `${baseUrl}/checkout/sdk?${params.toString()}`;
+    const checkoutUrl = `${baseUrl}${checkoutPath}?${params.toString()}`;
+    
+    console.log("=== Crossmint Checkout Debug ===");
+    console.log("API Key:", apiKey);
+    console.log("Is Production:", isProduction);
+    console.log("Base URL:", baseUrl);
+    console.log("Collection ID:", collectionId);
+    console.log("Recipient Address:", recipientAddress);
+    console.log("Full Checkout URL:", checkoutUrl);
+    console.log("================================");
+
+    return checkoutUrl;
   };
 
   const handleMessage = (event: any) => {
@@ -116,7 +129,10 @@ export function CrossmintPaymentModal({
           
           <View style={styles.info}>
             <Text style={styles.infoText}>
-              Note: This is using a WebView until the native SDK checkout component is available.
+              Debug: Check console for checkout URL details
+            </Text>
+            <Text style={styles.debugText} numberOfLines={3}>
+              URL: {generateCheckoutUrl()}
             </Text>
           </View>
         </View>
@@ -183,5 +199,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#666",
     textAlign: "center",
+  },
+  debugText: {
+    fontSize: 10,
+    color: "#999",
+    textAlign: "center",
+    marginTop: 4,
+    fontFamily: Platform.OS === "ios" ? "Courier" : "monospace",
   },
 });
