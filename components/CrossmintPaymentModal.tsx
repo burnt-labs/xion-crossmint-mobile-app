@@ -68,7 +68,7 @@ export function CrossmintPaymentModal({
               }}
               payment={{
                 crypto: {
-                  enabled: true,
+                  enabled: false, // Disabled until we have proper wallet integration
                   defaultChain: "base-sepolia",
                   defaultCurrency: "usdc",
                 },
