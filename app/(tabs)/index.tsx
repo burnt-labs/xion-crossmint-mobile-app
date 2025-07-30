@@ -1,783 +1,292 @@
-import { useState, useEffect } from "react";
-import { View, StyleSheet, Text, TouchableOpacity, Alert, ScrollView, Clipboard, Linking, TextInput, ActivityIndicator } from "react-native";
+import React, { useState, useEffect, useCallback } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  ActivityIndicator,
+  SafeAreaView,
+  RefreshControl,
+  Platform,
+  StatusBar,
+} from "react-native";
+import * as Haptics from "expo-haptics";
 import {
   useAbstraxionAccount,
   useAbstraxionSigningClient,
   useAbstraxionClient,
 } from "@burnt-labs/abstraxion-react-native";
-import type { ExecuteResult } from "@cosmjs/cosmwasm-stargate";
-import { JSONInput } from "../../components/JSONInput";
+import { WalletHeader } from "@/components/WalletHeader";
+import { CollectionCard } from "@/components/CollectionCard";
+import { CrossmintPaymentModal } from "@/components/CrossmintPaymentModal";
+import collectionsData from "@/data/collections.json";
 
-if (!process.env.EXPO_PUBLIC_USER_MAP_CONTRACT_ADDRESS) {
-  throw new Error("EXPO_PUBLIC_USER_MAP_CONTRACT_ADDRESS is not set in your environment file");
+interface Collection {
+  id: string;
+  contractAddress: string;
+  metadata?: {
+    name: string;
+    symbol: string;
+    description: string;
+    image: string;
+  };
 }
 
-type ExecuteResultOrUndefined = ExecuteResult | undefined;
-type QueryResult = {
-  users?: string[];
-  value?: string;
-  map?: Array<[string, string]>;
-};
-
-// Add retry utility function
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
-const retryOperation = async <T>(
-  operation: () => Promise<T>,
-  maxRetries = 3,
-  delay = 1000
-): Promise<T> => {
-  let lastError: Error | null = null;
+export default function NFTMarketplace() {
+  const { data: account } = useAbstraxionAccount();
+  const { login, logout } = useAbstraxionClient();
+  const { client: signingClient } = useAbstraxionSigningClient();
   
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      return await operation();
-    } catch (error) {
-      lastError = error as Error;
-      console.log(`Attempt ${i + 1} failed:`, error);
-      if (i < maxRetries - 1) {
-        await sleep(delay * Math.pow(2, i)); // Exponential backoff
-      }
-    }
-  }
-  
-  throw lastError;
-};
+  const [collections, setCollections] = useState<Collection[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [paymentModalVisible, setPaymentModalVisible] = useState(false);
+  const [selectedCollection, setSelectedCollection] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-export default function Index() {
-  // Abstraxion hooks
-  const { data: account, logout, login, isConnected, isConnecting } = useAbstraxionAccount();
-  const { client, signArb } = useAbstraxionSigningClient();
-  const { client: queryClient } = useAbstraxionClient();
-
-  // State variables
-  const [loading, setLoading] = useState(false);
-  const [isOperationInProgress, setIsOperationInProgress] = useState(false);
-  const [isTransactionPending, setIsTransactionPending] = useState(false);
-  const [executeResult, setExecuteResult] = useState<ExecuteResultOrUndefined>(undefined);
-  const [queryResult, setQueryResult] = useState<QueryResult>({});
-  const [jsonInput, setJsonInput] = useState<string>("");
-  const [selectedAddress, setSelectedAddress] = useState<string>("");
-  const [jsonError, setJsonError] = useState<string>("");
-  const [showValueByUserForm, setShowValueByUserForm] = useState<boolean>(false);
-  const [showUpdateJsonForm, setShowUpdateJsonForm] = useState<boolean>(true);
-  const [addressInput, setAddressInput] = useState<string>("");
-  const [activeView, setActiveView] = useState<string>("updateJson");
-  const [balance, setBalance] = useState<string>("0");
-
-
-  // Add effect to fetch balance
-  useEffect(() => {
-    const fetchBalance = async () => {
-      if (account?.bech32Address && queryClient) {
-        try {
-          const response = await queryClient.getBalance(account.bech32Address, "uxion");
-          setBalance(response.amount);
-        } catch (error) {
-          console.error("Error fetching balance:", error);
-        }
-      }
-    };
-
-    fetchBalance();
-  }, [account?.bech32Address, queryClient]);
-
-  const clearResults = () => {
-    setQueryResult({});
-    setExecuteResult(undefined);
-  };
-
-  // Effect to handle account changes
-  useEffect(() => {
-    const initializeUserData = async () => {
-      if (account?.bech32Address && queryClient) {
-        setShowUpdateJsonForm(true);
-        setActiveView("updateJson");
-        clearResults();
-        
-        // Fetch user's current value on login
-        try {
-          const response = await queryClient.queryContractSmart(process.env.EXPO_PUBLIC_USER_MAP_CONTRACT_ADDRESS, {
-            get_value_by_user: { address: account.bech32Address }
-          });
-          
-          if (response && response !== null && response !== "") {
-            setJsonInput(response);
-          }
-        } catch (error) {
-          // User has no value stored yet, which is fine - don't show error
-          console.log("No existing value for user");
-        }
-      }
-    };
-    
-    initializeUserData();
-  }, [account?.bech32Address, queryClient]);
-
-  // Query functions
-  const getUsers = async () => {
-    setIsOperationInProgress(true);
-    setLoading(true);
-    clearResults();
-    setActiveView("users");
-    setShowUpdateJsonForm(false);
-    setShowValueByUserForm(false);
-    try {
-      if (!queryClient) throw new Error("Query client is not defined");
-      const response = await queryClient.queryContractSmart(process.env.EXPO_PUBLIC_USER_MAP_CONTRACT_ADDRESS, { get_users: {} });
-      
-      // Handle empty user list
-      if (!response || response.length === 0) {
-        setQueryResult({ users: [] });
-      } else {
-        setQueryResult({ users: response });
-      }
-    } catch (error) {
-      Alert.alert("Error", "Error querying users");
-    } finally {
+  const loadCollections = useCallback(async () => {
+    if (!signingClient || !account?.bech32Address) {
       setLoading(false);
-      setIsOperationInProgress(false);
-    }
-  };
-
-  const getMap = async () => {
-    setIsOperationInProgress(true);
-    setLoading(true);
-    clearResults();
-    setActiveView("map");
-    setShowUpdateJsonForm(false);
-    setShowValueByUserForm(false);
-    try {
-      if (!queryClient) throw new Error("Query client is not defined");
-      const response = await queryClient.queryContractSmart(process.env.EXPO_PUBLIC_USER_MAP_CONTRACT_ADDRESS, { get_map: {} });
-      
-      // Handle empty map
-      if (!response || response.length === 0) {
-        setQueryResult({ map: [] });
-      } else {
-        setQueryResult({ map: response });
-      }
-    } catch (error) {
-      Alert.alert("Error", "Error querying map");
-    } finally {
-      setLoading(false);
-      setIsOperationInProgress(false);
-    }
-  };
-
-  const getValueByUser = async (address: string) => {
-    setIsOperationInProgress(true);
-    setLoading(true);
-    clearResults();
-    setActiveView("value");
-    setShowUpdateJsonForm(false);
-    setShowValueByUserForm(false);
-    try {
-      if (!queryClient) throw new Error("Query client is not defined");
-      const response = await queryClient.queryContractSmart(process.env.EXPO_PUBLIC_USER_MAP_CONTRACT_ADDRESS, { 
-        get_value_by_user: { address } 
-      });
-      
-      // Handle case where user has no value stored
-      if (!response || response === null || response === "") {
-        setQueryResult({ value: null });
-      } else {
-        setQueryResult({ value: response });
-      }
-      setSelectedAddress(address);
-    } catch (error) {
-      // Handle specific error when user has no value
-      if (error.message && error.message.includes("No value found")) {
-        setQueryResult({ value: null });
-        setSelectedAddress(address);
-      } else {
-        Alert.alert("Error", "Error querying value");
-      }
-    } finally {
-      setLoading(false);
-      setIsOperationInProgress(false);
-    }
-  };
-
-  const validateJson = (jsonString: string): boolean => {
-    // Allow empty string without showing error
-    if (!jsonString.trim()) {
-      setJsonError("");
-      return false;
-    }
-    
-    try {
-      JSON.parse(jsonString);
-      setJsonError("");
-      return true;
-    } catch (error) {
-      setJsonError("Invalid JSON format");
-      return false;
-    }
-  };
-
-  const formatJson = (jsonString: string): string => {
-    try {
-      const parsed = JSON.parse(jsonString);
-      return JSON.stringify(parsed, null, 2);
-    } catch (error) {
-      return jsonString;
-    }
-  };
-
-  const handleFormatJson = () => {
-    if (validateJson(jsonInput)) {
-      setJsonInput(formatJson(jsonInput));
-    }
-  };
-
-  // Update JSON value with retry logic
-  const updateValue = async () => {
-    if (!validateJson(jsonInput)) {
       return;
     }
-    setIsOperationInProgress(true);
-    setLoading(true);
-    setIsTransactionPending(true);
+
     try {
-      if (!client || !account) throw new Error("Client or account not defined");
+      setError(null);
+      const collectionsWithInfo = await Promise.all(
+        collectionsData.collections.map(async (collection) => {
+          try {
+            const contractInfo = await signingClient.queryContractSmart(
+              collection.contractAddress,
+              { contract_info: {} }
+            );
+            
+            const hasRoyaltyInfo = await signingClient.queryContractSmart(
+              collection.contractAddress,
+              { extension: { msg: { royalty_info: {} } } }
+            ).catch(() => null);
 
-      const msg = {
-        update: {
-          value: jsonInput
-        }
-      };
+            const metadata = await signingClient.queryContractSmart(
+              collection.contractAddress,
+              { contract_metadata: {} }
+            ).catch(() => null);
 
-      // Execute with retry
-      const res = await retryOperation(async () => {
-        return await client.execute(
-          account.bech32Address,
-          process.env.EXPO_PUBLIC_USER_MAP_CONTRACT_ADDRESS,
-          msg,
-          "auto"
-        );
-      });
-      
-      setExecuteResult(res);
-      console.log("Transaction successful:", res);
-      
-      // Show success confirmation
-      Alert.alert(
-        "Success",
-        "Your JSON data has been successfully updated on the blockchain.",
-        [{ text: "OK" }]
-      );
-      
-      // Refresh data with retry
-      const updatedData = await retryOperation(async () => {
-        if (!queryClient) throw new Error("Query client not available");
-        return await queryClient.queryContractSmart(process.env.EXPO_PUBLIC_USER_MAP_CONTRACT_ADDRESS, {
-          get_value_by_user: { 
-            address: account.bech32Address 
+            return {
+              ...collection,
+              contractInfo,
+              hasRoyaltyInfo: !!hasRoyaltyInfo,
+              metadata: metadata || contractInfo,
+            };
+          } catch (err) {
+            console.error(`Error fetching collection ${collection.id}:`, err);
+            return collection;
           }
-        });
-      });
-      
-      if (updatedData && typeof updatedData === 'string') {
-        setJsonInput(updatedData);
-      }
-    } catch (error) {
-      console.error("Error executing transaction:", error);
-      const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
-      
-      Alert.alert(
-        "Error",
-        `Failed to update JSON data: ${errorMessage}. Please check your network connection and try again.`
+        })
       );
+      setCollections(collectionsWithInfo);
+    } catch (error) {
+      console.error("Error loading collections:", error);
+      setError("Failed to load collections. Pull to refresh.");
     } finally {
       setLoading(false);
-      setIsOperationInProgress(false);
-      setIsTransactionPending(false);
+      setRefreshing(false);
     }
-  };
+  }, [signingClient, account?.bech32Address]);
 
-  function handleLogout() {
+  useEffect(() => {
+    loadCollections();
+  }, [loadCollections]);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    loadCollections();
+  }, [loadCollections]);
+
+  const handleBuyPress = useCallback((collectionId: string) => {
+    if (!account?.bech32Address) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      handleLogin();
+      return;
+    }
+    
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setSelectedCollection(collectionId);
+    setPaymentModalVisible(true);
+  }, [account?.bech32Address]);
+
+  const handleLogin = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    login();
+  }, [login]);
+
+  const handleLogout = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     logout();
-    clearResults();
-  }
+  }, [logout]);
 
-  const copyToClipboard = async (text: string) => {
-    try {
-      await Clipboard.setString(text);
-      Alert.alert("Success", "Address copied to clipboard!");
-    } catch (error) {
-      Alert.alert("Error", "Failed to copy address");
-    }
-  };
+  const renderCollection = useCallback(({ item }: { item: Collection }) => (
+    <CollectionCard
+      id={item.id}
+      contractAddress={item.contractAddress}
+      metadata={item.metadata}
+      onBuyPress={() => handleBuyPress(item.id)}
+    />
+  ), [handleBuyPress]);
+
+  const renderEmptyState = () => (
+    <View style={styles.emptyState}>
+      {!account?.bech32Address ? (
+        <>
+          <Text style={styles.emptyStateTitle}>Welcome to NFT Marketplace</Text>
+          <Text style={styles.emptyStateText}>
+            Connect your wallet to start exploring and purchasing NFTs
+          </Text>
+        </>
+      ) : (
+        <>
+          <Text style={styles.emptyStateTitle}>No Collections Available</Text>
+          <Text style={styles.emptyStateText}>
+            Check back later for new collections
+          </Text>
+        </>
+      )}
+    </View>
+  );
+
+  const renderHeader = () => (
+    <View style={styles.header}>
+      <Text style={styles.title}>Collections</Text>
+      <Text style={styles.subtitle}>
+        {account?.bech32Address 
+          ? `${collections.length} collection${collections.length !== 1 ? 's' : ''} available`
+          : 'Connect wallet to view collections'
+        }
+      </Text>
+    </View>
+  );
 
   return (
-    <ScrollView 
-      style={styles.container}
-      contentContainerStyle={styles.contentContainer}
-    >
-      <Text style={styles.title}>User Map Dapp</Text>
+    <SafeAreaView style={styles.container}>
+      <StatusBar 
+        barStyle={Platform.OS === 'ios' ? 'dark-content' : 'light-content'} 
+      />
+      
+      <WalletHeader
+        address={account?.bech32Address}
+        onConnect={handleLogin}
+        onDisconnect={handleLogout}
+      />
 
-      {!isConnected ? (
-        <View style={styles.connectButtonContainer}>
-          <TouchableOpacity
-            onPress={login}
-            style={[styles.menuButton, styles.fullWidthButton, isConnecting && styles.disabledButton]}
-            disabled={isConnecting}
-          >
-            <Text style={styles.buttonText}>
-              {isConnecting ? "Connecting..." : "Connect Wallet"}
-            </Text>
-          </TouchableOpacity>
-        </View>
-      ) : (
-        <View style={styles.mainContainer}>
-          {/* Row 1: Account Info */}
-          <View style={styles.accountInfoContainer}>
-            <Text style={styles.accountLabel}>Connected Account:</Text>
-            <View style={styles.addressContainer}>
-              <Text style={styles.addressText} numberOfLines={1} ellipsizeMode="middle">
-                {account?.bech32Address}
-              </Text>
-              <TouchableOpacity
-                onPress={() => account?.bech32Address && copyToClipboard(account.bech32Address)}
-                style={styles.copyButton}
-              >
-                <Text style={styles.copyButtonText}>Copy</Text>
-              </TouchableOpacity>
-            </View>
-            <TouchableOpacity
-              onPress={logout}
-              style={[styles.menuButton, styles.logoutButton, styles.fullWidthButton, (loading || isOperationInProgress) && styles.disabledButton]}
-              disabled={loading || isOperationInProgress}
-            >
-              <Text style={styles.buttonText}>Logout</Text>
-            </TouchableOpacity>
-          </View>
+      <FlatList
+        data={account?.bech32Address ? collections : []}
+        renderItem={renderCollection}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={styles.listContainer}
+        showsVerticalScrollIndicator={false}
+        ListHeaderComponent={renderHeader}
+        ListEmptyComponent={renderEmptyState}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor="#007AFF"
+            colors={["#007AFF"]}
+          />
+        }
+        removeClippedSubviews={true}
+        maxToRenderPerBatch={5}
+        initialNumToRender={5}
+        windowSize={10}
+      />
 
-          {/* Row 2: Menu Buttons */}
-          <View style={styles.menuContainer}>
-            <TouchableOpacity
-              onPress={getUsers}
-              style={[styles.menuButton, (loading || isOperationInProgress) && styles.disabledButton]}
-              disabled={loading || isOperationInProgress}
-            >
-              <Text style={styles.buttonText}>Get Users</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={getMap}
-              style={[styles.menuButton, (loading || isOperationInProgress) && styles.disabledButton]}
-              disabled={loading || isOperationInProgress}
-            >
-              <Text style={styles.buttonText}>Get Map</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={() => {
-                setShowValueByUserForm(true);
-                setShowUpdateJsonForm(false);
-                clearResults();
-                setActiveView("valueForm");
-              }}
-              style={[styles.menuButton, (loading || isOperationInProgress) && styles.disabledButton]}
-              disabled={loading || isOperationInProgress}
-            >
-              <Text style={styles.buttonText}>Get Value by User</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={() => {
-                setShowUpdateJsonForm(true);
-                setShowValueByUserForm(false);
-                clearResults();
-                setActiveView("updateJson");
-              }}
-              style={[styles.menuButton, (loading || isOperationInProgress) && styles.disabledButton]}
-              disabled={loading || isOperationInProgress}
-            >
-              <Text style={styles.buttonText}>Update JSON</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Row 3: Results */}
-          <View style={styles.resultsContainer}>
-            {showValueByUserForm && (
-              <View style={styles.formSection}>
-                <Text style={styles.label}>Enter User Address:</Text>
-                <TextInput
-                  style={styles.input}
-                  value={addressInput}
-                  onChangeText={setAddressInput}
-                  placeholder="xion1..."
-                  placeholderTextColor="#666"
-                />
-                <TouchableOpacity
-                  onPress={() => getValueByUser(addressInput)}
-                  style={[styles.menuButton, (loading || isOperationInProgress) && styles.disabledButton]}
-                  disabled={loading || isOperationInProgress}
-                >
-                  <Text style={styles.buttonText}>Get Value</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {showUpdateJsonForm && account?.bech32Address && (
-              <View style={styles.formSection}>
-                <JSONInput
-                  style={styles.jsonInput}
-                  value={jsonInput}
-                  onChangeText={setJsonInput}
-                  onValidationChange={(isValid) => {
-                    if (!isValid && jsonInput.trim()) {
-                      setJsonError("Invalid JSON format");
-                    } else {
-                      setJsonError("");
-                    }
-                  }}
-                  error={jsonError}
-                  placeholder="Enter JSON data..."
-                  placeholderTextColor="#666"
-                />
-                <View style={styles.buttonRow}>
-                  <TouchableOpacity
-                    onPress={updateValue}
-                    style={[styles.menuButton, (loading || isOperationInProgress || !!jsonError || isTransactionPending) && styles.disabledButton]}
-                    disabled={loading || isOperationInProgress || !!jsonError || isTransactionPending}
-                  >
-                    {isTransactionPending ? (
-                      <View style={styles.loadingContainer}>
-                        <ActivityIndicator size="small" color="#fff" />
-                        <Text style={[styles.buttonText, styles.loadingText]}>Submitting...</Text>
-                      </View>
-                    ) : (
-                      <Text style={styles.buttonText}>Submit JSON</Text>
-                    )}
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={handleFormatJson}
-                    style={[styles.menuButton, (loading || isOperationInProgress) && styles.disabledButton]}
-                    disabled={loading || isOperationInProgress}
-                  >
-                    <Text style={styles.buttonText}>Format JSON</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
-
-            {/* Query Results */}
-            {activeView === "users" && queryResult.users && (
-              <View style={styles.resultCard}>
-                <Text style={styles.resultTitle}>Users:</Text>
-                {queryResult.users.length === 0 ? (
-                  <View style={styles.emptyState}>
-                    <Text style={styles.emptyStateText}>No users have stored data yet.</Text>
-                    <Text style={styles.emptyStateSubText}>Be the first to add your data!</Text>
-                  </View>
-                ) : (
-                  queryResult.users.map((user, index) => (
-                    <View key={index} style={styles.userRow}>
-                      <Text style={styles.userAddress}>{user}</Text>
-                      <TouchableOpacity
-                        onPress={() => {
-                          getValueByUser(user);
-                          setActiveView("value");
-                        }}
-                        style={styles.smallButton}
-                      >
-                        <Text style={styles.buttonText}>View Value</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ))
-                )}
-              </View>
-            )}
-
-            {activeView === "value" && queryResult.hasOwnProperty('value') && (
-              <View style={styles.resultCard}>
-                <Text style={styles.resultTitle}>Value for {selectedAddress}:</Text>
-                {queryResult.value === null ? (
-                  <View style={styles.emptyState}>
-                    <Text style={styles.emptyStateText}>No data stored for this user.</Text>
-                  </View>
-                ) : (
-                  <Text style={styles.resultText}>{queryResult.value}</Text>
-                )}
-              </View>
-            )}
-
-            {activeView === "map" && queryResult.map && (
-              <View style={styles.resultCard}>
-                <Text style={styles.resultTitle}>Map Contents:</Text>
-                {queryResult.map.length === 0 ? (
-                  <View style={styles.emptyState}>
-                    <Text style={styles.emptyStateText}>The user map is empty.</Text>
-                    <Text style={styles.emptyStateSubText}>No data has been stored yet.</Text>
-                  </View>
-                ) : (
-                  queryResult.map.map(([address, value], index) => (
-                    <View key={index} style={styles.mapItem}>
-                      <Text style={styles.mapAddress}>Address: {address}</Text>
-                      <Text style={styles.mapValue}>Value: {value}</Text>
-                    </View>
-                  ))
-                )}
-              </View>
-            )}
-
-            {executeResult && (
-              <View style={styles.resultCard}>
-                <Text style={styles.resultTitle}>Transaction Details:</Text>
-                <Text style={styles.resultText}>
-                  Transaction Hash: {executeResult.transactionHash}
-                </Text>
-                <Text style={styles.resultText}>
-                  Block Height: {executeResult.height}
-                </Text>
-                <TouchableOpacity
-                  onPress={() => {
-                    Linking.openURL(`https://www.mintscan.io/xion-testnet/tx/${executeResult.transactionHash}?height=${executeResult.height}`);
-                  }}
-                  style={styles.linkButton}
-                >
-                  <Text style={styles.linkText}>View on Mintscan</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-          </View>
+      {error && (
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>{error}</Text>
         </View>
       )}
-    </ScrollView>
+
+      {selectedCollection && (
+        <CrossmintPaymentModal
+          visible={paymentModalVisible}
+          onClose={() => {
+            setPaymentModalVisible(false);
+            setSelectedCollection(null);
+          }}
+          collectionId={selectedCollection}
+          recipientAddress={account?.bech32Address || ""}
+          onSuccess={() => {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            console.log("Purchase successful!");
+          }}
+        />
+      )}
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f0f0f0",
+    backgroundColor: "#FFFFFF",
   },
-  contentContainer: {
-    padding: 20,
-    paddingTop: 60,
+  listContainer: {
+    flexGrow: 1,
+    paddingBottom: Platform.OS === 'ios' ? 20 : 40,
+  },
+  header: {
+    paddingHorizontal: 20,
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 60,
     paddingBottom: 20,
   },
   title: {
-    fontSize: 24,
-    fontWeight: "bold",
-    marginBottom: 20,
-    color: "#333",
-    textAlign: "center",
+    fontSize: 34,
+    fontWeight: Platform.OS === 'ios' ? '700' : 'bold',
+    color: "#000000",
+    letterSpacing: Platform.OS === 'ios' ? 0.374 : 0,
+    marginBottom: 4,
   },
-  mainContainer: {
-    flex: 1,
-    gap: 20,
-  },
-  accountInfoContainer: {
-    backgroundColor: "#fff",
-    padding: 15,
-    borderRadius: 10,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: "#ddd",
-  },
-  accountLabel: {
-    fontSize: 16,
-    fontWeight: "bold",
-    color: "#333",
-    marginBottom: 8,
-  },
-  addressContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "#f5f5f5",
-    padding: 10,
-    borderRadius: 5,
-  },
-  addressText: {
-    flex: 1,
-    fontSize: 14,
-    color: "#666",
-    marginRight: 10,
-  },
-  copyButton: {
-    backgroundColor: "#2196F3",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 4,
-  },
-  copyButtonText: {
-    color: "#fff",
-    fontSize: 12,
-    fontWeight: "500",
-  },
-  menuContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    paddingVertical: 10,
-  },
-  menuButton: {
-    padding: 15,
-    borderRadius: 5,
-    backgroundColor: "#2196F3",
-    alignItems: "center",
-    flex: 1,
-    minWidth: 120,
-    maxWidth: '48%',
-  },
-  resultsContainer: {
-    flex: 1,
-    gap: 20,
-    marginBottom: 20,
-  },
-  formSection: {
-    gap: 10,
-  },
-  label: {
-    fontSize: 16,
-    color: "#333",
-    marginBottom: 5,
-  },
-  input: {
-    backgroundColor: "#fff",
-    padding: 10,
-    borderRadius: 5,
-    borderWidth: 1,
-    borderColor: "#ddd",
-    color: "#000",
-  },
-  jsonInput: {
-    backgroundColor: "#fff",
-    padding: 10,
-    borderRadius: 5,
-    borderWidth: 1,
-    borderColor: "#ddd",
-    color: "#000",
-    minHeight: 200,
-    textAlignVertical: "top",
-  },
-  errorInput: {
-    borderColor: "#ff0000",
-  },
-  errorText: {
-    color: "#ff0000",
-    fontSize: 14,
-  },
-  buttonRow: {
-    flexDirection: "row",
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  resultCard: {
-    backgroundColor: "#fff",
-    padding: 15,
-    borderRadius: 10,
-    marginTop: 10,
-    borderWidth: 2,
-    borderColor: "#2196F3",
-    marginBottom: 10,
-  },
-  resultTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
-    marginBottom: 10,
-    color: "#333",
-  },
-  resultText: {
-    fontSize: 14,
-    color: "#666",
-    marginBottom: 5,
-  },
-  userRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 10,
-  },
-  userAddress: {
-    flex: 1,
-    fontSize: 14,
-    color: "#666",
-  },
-  smallButton: {
-    padding: 8,
-    borderRadius: 5,
-    backgroundColor: "#2196F3",
-    marginLeft: 10,
-  },
-  mapItem: {
-    borderWidth: 1,
-    borderColor: "#ddd",
-    borderRadius: 5,
-    padding: 10,
-    marginBottom: 10,
-  },
-  mapAddress: {
-    fontSize: 14,
-    fontWeight: "bold",
-    color: "#333",
-    marginBottom: 5,
-  },
-  mapValue: {
-    fontSize: 14,
-    color: "#666",
-  },
-  balanceText: {
-    fontSize: 14,
-    color: "#666",
-    marginTop: 8,
-    textAlign: "right",
-  },
-  connectButtonContainer: {
-    width: '100%',
-    paddingHorizontal: 20,
-    alignItems: 'center',
-  },
-  fullWidthButton: {
-    width: '100%',
-    maxWidth: '100%',
-  },
-  linkButton: {
-    marginTop: 10,
-    padding: 10,
-    backgroundColor: '#2196F3',
-    borderRadius: 5,
-    alignItems: 'center',
-  },
-  linkText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  logoutButton: {
-    marginTop: 15,
-    backgroundColor: '#dc3545',
-    width: '100%',
-    maxWidth: '100%',
+  subtitle: {
+    fontSize: 15,
+    color: "#8E8E93",
+    fontWeight: '400',
   },
   emptyState: {
-    paddingVertical: 30,
-    alignItems: 'center',
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 40,
+    paddingTop: 100,
+  },
+  emptyStateTitle: {
+    fontSize: 22,
+    fontWeight: '600',
+    color: "#000000",
+    marginBottom: 8,
+    textAlign: "center",
   },
   emptyStateText: {
-    fontSize: 16,
-    color: '#666',
-    marginBottom: 8,
+    fontSize: 17,
+    color: "#8E8E93",
+    textAlign: "center",
+    lineHeight: 22,
   },
-  emptyStateSubText: {
-    fontSize: 14,
-    color: '#888',
+  errorContainer: {
+    position: 'absolute',
+    bottom: 100,
+    left: 20,
+    right: 20,
+    backgroundColor: "#FF3B30",
+    padding: 16,
+    borderRadius: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 4,
   },
-  disabledButton: {
-    backgroundColor: '#ccc',
-    opacity: 0.7,
-  },
-  loadingContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  loadingText: {
-    marginLeft: 8,
+  errorText: {
+    color: "#FFFFFF",
+    fontSize: 15,
+    textAlign: "center",
+    fontWeight: '500',
   },
 });

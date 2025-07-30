@@ -1,23 +1,23 @@
 {
   "expo": {
-    "name": "abstraxion-expo-demo",
-    "slug": "abstraxion-expo-demo",
+    "name": "XION Crossmint Mobile",
+    "slug": "xion-crossmint-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "abstraxion-expo-demo",
+    "scheme": "xion-crossmint-mobile",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.anonymous.abstraxion-expo-demo"
+      "bundleIdentifier": "com.xion.crossmintmobile"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "com.anonymous.abstraxionexpodemo"
+      "package": "com.xion.crossmintmobile"
     },
     "plugins": [
       "expo-router",

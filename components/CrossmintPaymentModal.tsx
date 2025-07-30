@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   StyleSheet,
   SafeAreaView,
+  Platform,
 } from "react-native";
 import { 
   CrossmintProvider, 
@@ -13,6 +14,7 @@ import {
 } from "@crossmint/client-sdk-react-native-ui";
 import { XION_CONFIG, CROSSMINT_CONFIG } from "@/config/constants";
 import { Ionicons } from "@expo/vector-icons";
+import * as Haptics from "expo-haptics";
 
 interface CrossmintPaymentModalProps {
   visible: boolean;
@@ -31,12 +33,19 @@ export function CrossmintPaymentModal({
 }: CrossmintPaymentModalProps) {
   const handleSuccess = () => {
     console.log("Payment successful!");
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     onSuccess?.();
     onClose();
   };
 
   const handleError = (error: any) => {
     console.error("Payment error:", error);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+  };
+
+  const handleClose = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    onClose();
   };
 
   if (!visible) return null;
@@ -46,14 +55,15 @@ export function CrossmintPaymentModal({
       visible={visible}
       animationType="slide"
       presentationStyle="pageSheet"
-      onRequestClose={onClose}
+      onRequestClose={handleClose}
     >
       <SafeAreaView style={styles.container}>
         <View style={styles.header}>
-          <Text style={styles.title}>Complete Purchase</Text>
-          <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-            <Ionicons name="close" size={24} color="#333" />
+          <TouchableOpacity onPress={handleClose} style={styles.closeButton}>
+            <Ionicons name="close" size={28} color="#000000" />
           </TouchableOpacity>
+          <Text style={styles.title}>Complete Purchase</Text>
+          <View style={styles.placeholder} />
         </View>
 
         <View style={styles.content}>
@@ -99,27 +109,37 @@ export function CrossmintPaymentModal({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
+    backgroundColor: "#FFFFFF",
   },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: "#e5e5e5",
+    paddingHorizontal: 16,
+    paddingTop: Platform.OS === 'ios' ? 16 : 24,
+    paddingBottom: 16,
+    borderBottomWidth: 0.5,
+    borderBottomColor: "#C6C6C8",
   },
   title: {
-    fontSize: 20,
-    fontWeight: "bold",
-    color: "#333",
+    fontSize: 17,
+    fontWeight: Platform.OS === 'ios' ? '600' : 'bold',
+    color: "#000000",
+    letterSpacing: Platform.OS === 'ios' ? -0.4 : 0,
   },
   closeButton: {
-    padding: 4,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#F2F2F7",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  placeholder: {
+    width: 32,
   },
   content: {
     flex: 1,
-    padding: 20,
+    backgroundColor: "#F2F2F7",
   },
 });
