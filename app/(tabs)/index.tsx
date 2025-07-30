@@ -4,17 +4,17 @@ import {
   Text,
   StyleSheet,
   FlatList,
-  ActivityIndicator,
   SafeAreaView,
   RefreshControl,
   Platform,
   StatusBar,
+  TouchableOpacity,
 } from "react-native";
 import * as Haptics from "expo-haptics";
+import { Ionicons } from "@expo/vector-icons";
 import {
   useAbstraxionAccount,
   useAbstraxionSigningClient,
-  useAbstraxionClient,
 } from "@burnt-labs/abstraxion-react-native";
 import { WalletHeader } from "@/components/WalletHeader";
 import { CollectionCard } from "@/components/CollectionCard";
@@ -33,12 +33,10 @@ interface Collection {
 }
 
 export default function NFTMarketplace() {
-  const { data: account } = useAbstraxionAccount();
-  const { login, logout } = useAbstraxionClient();
+  const { data: account, login, logout } = useAbstraxionAccount();
   const { client: signingClient } = useAbstraxionSigningClient();
   
   const [collections, setCollections] = useState<Collection[]>([]);
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [paymentModalVisible, setPaymentModalVisible] = useState(false);
   const [selectedCollection, setSelectedCollection] = useState<string | null>(null);
@@ -46,7 +44,6 @@ export default function NFTMarketplace() {
 
   const loadCollections = useCallback(async () => {
     if (!signingClient || !account?.bech32Address) {
-      setLoading(false);
       return;
     }
 
@@ -87,7 +84,6 @@ export default function NFTMarketplace() {
       console.error("Error loading collections:", error);
       setError("Failed to load collections. Pull to refresh.");
     } finally {
-      setLoading(false);
       setRefreshing(false);
     }
   }, [signingClient, account?.bech32Address]);
@@ -136,9 +132,9 @@ export default function NFTMarketplace() {
     <View style={styles.emptyState}>
       {!account?.bech32Address ? (
         <>
-          <Text style={styles.emptyStateTitle}>Welcome to NFT Marketplace</Text>
+          <Text style={styles.emptyStateTitle}>Welcome to Digital Asset Marketplace</Text>
           <Text style={styles.emptyStateText}>
-            Connect your wallet to start exploring and purchasing NFTs
+            Connect your wallet to start exploring and purchasing Digital Assets
           </Text>
         </>
       ) : (
@@ -152,17 +148,38 @@ export default function NFTMarketplace() {
     </View>
   );
 
-  const renderHeader = () => (
-    <View style={styles.header}>
-      <Text style={styles.title}>Collections</Text>
-      <Text style={styles.subtitle}>
-        {account?.bech32Address 
-          ? `${collections.length} collection${collections.length !== 1 ? 's' : ''} available`
-          : 'Connect wallet to view collections'
-        }
-      </Text>
-    </View>
-  );
+  const renderHeader = () => {
+    const isLoggedOut = !account?.bech32Address;
+    
+    return (
+      <View style={[styles.header, isLoggedOut && styles.headerCentered]}>
+        <Text style={[styles.title, isLoggedOut && styles.textCentered]}>Collections</Text>
+        <Text style={[styles.subtitle, isLoggedOut && styles.textCentered]}>
+          {account?.bech32Address 
+            ? `${collections.length} collection${collections.length !== 1 ? 's' : ''} available`
+            : 'Connect wallet to view collections'
+          }
+        </Text>
+      </View>
+    );
+  };
+
+  const renderFooter = () => {
+    if (account?.bech32Address) return null;
+    
+    return (
+      <View style={styles.footerContainer}>
+        <TouchableOpacity
+          style={styles.connectButton}
+          onPress={handleLogin}
+          activeOpacity={0.9}
+        >
+          <Ionicons name="wallet" size={20} color="#FFFFFF" />
+          <Text style={styles.connectText}>Connect Wallet</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -184,6 +201,7 @@ export default function NFTMarketplace() {
         showsVerticalScrollIndicator={false}
         ListHeaderComponent={renderHeader}
         ListEmptyComponent={renderEmptyState}
+        ListFooterComponent={renderFooter}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -288,5 +306,38 @@ const styles = StyleSheet.create({
     fontSize: 15,
     textAlign: "center",
     fontWeight: '500',
+  },
+  footerContainer: {
+    paddingHorizontal: 20,
+    paddingVertical: 40,
+    alignItems: "center",
+  },
+  connectButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#007AFF",
+    paddingHorizontal: 24,
+    paddingVertical: 16,
+    borderRadius: 100,
+    gap: 8,
+    shadowColor: "#007AFF",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    elevation: 5,
+    minWidth: 200,
+  },
+  connectText: {
+    color: "#FFFFFF",
+    fontSize: 17,
+    fontWeight: "600",
+    letterSpacing: -0.4,
+  },
+  headerCentered: {
+    alignItems: "center",
+  },
+  textCentered: {
+    textAlign: "center",
   },
 });

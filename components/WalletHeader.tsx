@@ -87,16 +87,7 @@ export function WalletHeader({
             />
           </View>
         </TouchableOpacity>
-      ) : (
-        <TouchableOpacity
-          style={styles.connectButton}
-          onPress={onConnect}
-          activeOpacity={0.9}
-        >
-          <Ionicons name="wallet" size={20} color="#FFFFFF" />
-          <Text style={styles.connectText}>Connect Wallet</Text>
-        </TouchableOpacity>
-      )}
+      ) : null}
     </View>
   );
 }
@@ -104,7 +95,7 @@ export function WalletHeader({
 const styles = StyleSheet.create({
   container: {
     paddingHorizontal: 20,
-    paddingTop: Platform.OS === 'ios' ? 12 : 20,
+    paddingTop: Platform.OS === 'ios' ? 50 : 40,
     paddingBottom: 12,
     backgroundColor: "#FFFFFF",
   },
